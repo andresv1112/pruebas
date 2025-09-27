@@ -1,24 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:permission_handler/permission_handler.dart' as permission_handler;
 
 import '../models/weather_data.dart';
 import '../services/weather_service.dart';
-import '../widgets/weather_card.dart';
-
-class _LocationTarget {
-  final String label;
-  final double latitude;
-  final double longitude;
-
-  const _LocationTarget(this.label, this.latitude, this.longitude);
-}
-
-const List<_LocationTarget> _defaultLocations = [
-  _LocationTarget('Bogotá', 4.7110, -74.0721),
-  _LocationTarget('Medellín', 6.2442, -75.5812),
-  _LocationTarget('Cali', 3.4516, -76.5320),
-  _LocationTarget('Barranquilla', 10.9685, -74.7813),
-  _LocationTarget('Cartagena', 10.3910, -75.4794),
-];
+import '../widgets/wind_card.dart';
 
 class WeatherScreen extends StatefulWidget {
   const WeatherScreen({super.key});
@@ -29,15 +15,20 @@ class WeatherScreen extends StatefulWidget {
 
 class _WeatherScreenState extends State<WeatherScreen> {
   final OpenWeatherService _weatherService = OpenWeatherService();
-  List<WeatherData> _weatherData = [];
-  bool _isLoading = true;
-  String? _error;
-  String _searchQuery = '';
+
+  WeatherData? _currentWeather;
+  Position? _currentPosition;
+
+  bool _isLoading = false;
+  bool _serviceDisabled = false;
+  bool _permissionDenied = false;
+  bool _permissionDeniedForever = false;
+  String? _errorMessage;
 
   @override
   void initState() {
     super.initState();
-    _loadWeatherData();
+    _loadCurrentWeather();
   }
 
   @override
@@ -46,265 +37,255 @@ class _WeatherScreenState extends State<WeatherScreen> {
     super.dispose();
   }
 
-  Future<void> _loadWeatherData() async {
+  Future<void> _loadCurrentWeather() async {
     setState(() {
       _isLoading = true;
-      _error = null;
+      _serviceDisabled = false;
+      _permissionDenied = false;
+      _permissionDeniedForever = false;
+      _errorMessage = null;
     });
 
     try {
-      final results = await Future.wait(
-        _defaultLocations.map((location) async {
-          final weather = await _weatherService.getWeather(
-            latitude: location.latitude,
-            longitude: location.longitude,
-          );
-          if (weather.cityName == 'Ubicación desconocida') {
-            return weather.copyWith(cityName: location.label);
-          }
-          return weather;
-        }),
+      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        if (!mounted) return;
+        setState(() {
+          _serviceDisabled = true;
+          _isLoading = false;
+          _currentWeather = null;
+          _currentPosition = null;
+        });
+        return;
+      }
+
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+
+      if (permission == LocationPermission.deniedForever) {
+        if (!mounted) return;
+        setState(() {
+          _permissionDeniedForever = true;
+          _isLoading = false;
+          _currentWeather = null;
+          _currentPosition = null;
+        });
+        return;
+      }
+
+      if (permission == LocationPermission.denied) {
+        if (!mounted) return;
+        setState(() {
+          _permissionDenied = true;
+          _isLoading = false;
+          _currentWeather = null;
+          _currentPosition = null;
+        });
+        return;
+      }
+
+      final position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
       );
 
-      results.sort((a, b) => a.cityName.compareTo(b.cityName));
+      final weather = await _weatherService.getWeather(
+        latitude: position.latitude,
+        longitude: position.longitude,
+      );
 
       if (!mounted) return;
       setState(() {
-        _weatherData = results;
+        _currentWeather = weather;
+        _currentPosition = position;
         _isLoading = false;
       });
     } on OpenWeatherException catch (error) {
       if (!mounted) return;
       setState(() {
-        _error = error.message;
+        _errorMessage = error.message;
         _isLoading = false;
+        _currentWeather = null;
+        _currentPosition = null;
       });
     } catch (error) {
       if (!mounted) return;
       setState(() {
-        _error = error.toString();
+        _errorMessage =
+            'Ocurrió un error inesperado al obtener el clima: $error';
         _isLoading = false;
+        _currentWeather = null;
+        _currentPosition = null;
       });
     }
   }
 
-  List<WeatherData> get _filteredData {
-    if (_searchQuery.trim().isEmpty) {
-      return _weatherData;
-    }
-
-    final query = _searchQuery.toLowerCase().trim();
-    return _weatherData.where((data) {
-      final name = data.cityName.toLowerCase();
-      final country = (data.countryCode ?? '').toLowerCase();
-      final description = (data.description ?? '').toLowerCase();
-      return name.contains(query) ||
-          country.contains(query) ||
-          description.contains(query);
-    }).toList();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.grey[100],
-      appBar: AppBar(
-        title: const Text(
-          'Clima en Colombia - OpenWeather',
-          style: TextStyle(
-            fontWeight: FontWeight.bold,
-            color: Colors.white,
-          ),
-        ),
-        backgroundColor: Colors.blue[700],
-        elevation: 0,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh, color: Colors.white),
-            onPressed: _loadWeatherData,
-          ),
-        ],
-      ),
-      body: Column(
-        children: [
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Colors.blue[700],
-              borderRadius: const BorderRadius.only(
-                bottomLeft: Radius.circular(20),
-                bottomRight: Radius.circular(20),
-              ),
-            ),
-            child: Column(
-              children: [
-                Text(
-                  'Datos provistos por OpenWeatherMap',
-                  style: TextStyle(
-                    color: Colors.white.withOpacity(0.9),
-                    fontSize: 16,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  '${_filteredData.length} ubicaciones monitoreadas',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 24,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.15),
-                    borderRadius: BorderRadius.circular(30),
-                  ),
-                  child: const Text(
-                    'Actualización en tiempo real por coordenadas',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: TextField(
-              onChanged: (value) {
-                setState(() {
-                  _searchQuery = value;
-                });
-              },
-              decoration: InputDecoration(
-                hintText: 'Buscar por ciudad, país o condición climática...',
-                prefixIcon: const Icon(Icons.search),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide.none,
-                ),
-                filled: true,
-                fillColor: Colors.white,
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 12,
-                ),
-              ),
-            ),
-          ),
-          Expanded(
-            child: _buildContent(),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildContent() {
-    if (_isLoading) {
-      return const Center(
+  Widget _buildStatusMessage({
+    required IconData icon,
+    required Color iconColor,
+    required String title,
+    required String message,
+    List<Widget>? actions,
+  }) {
+    return Card(
+      margin: const EdgeInsets.symmetric(vertical: 12),
+      child: Padding(
+        padding: const EdgeInsets.all(24),
         child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            CircularProgressIndicator(),
-            SizedBox(height: 16),
-            Text(
-              'Cargando datos meteorológicos...',
-              style: TextStyle(fontSize: 16),
-            ),
-          ],
-        ),
-      );
-    }
-
-    if (_error != null) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Icon(
-              Icons.error_outline,
-              size: 64,
-              color: Colors.red,
-            ),
+            Icon(icon, size: 48, color: iconColor),
             const SizedBox(height: 16),
-            const Text(
-              'Error al cargar los datos',
-              style: TextStyle(
-                fontSize: 18,
+            Text(
+              title,
+              style: const TextStyle(
+                fontSize: 20,
                 fontWeight: FontWeight.bold,
               ),
-            ),
-            const SizedBox(height: 8),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 32),
-              child: Text(
-                _error!,
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: Colors.grey[600],
-                ),
-              ),
-            ),
-            const SizedBox(height: 16),
-            ElevatedButton(
-              onPressed: _loadWeatherData,
-              child: const Text('Reintentar'),
-            ),
-          ],
-        ),
-      );
-    }
-
-    if (_filteredData.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Icon(
-              Icons.search_off,
-              size: 64,
-              color: Colors.grey,
-            ),
-            const SizedBox(height: 16),
-            Text(
-              _searchQuery.isEmpty
-                  ? 'No hay datos disponibles'
-                  : 'No se encontraron resultados para "$_searchQuery"',
               textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 18,
-                color: Colors.grey[600],
-              ),
             ),
-            if (_searchQuery.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              Text(
-                'Intenta con otros términos de búsqueda',
-                style: TextStyle(
-                  color: Colors.grey[500],
-                ),
+            const SizedBox(height: 12),
+            Text(
+              message,
+              style: TextStyle(
+                fontSize: 16,
+                color: Colors.grey[700],
+              ),
+              textAlign: TextAlign.center,
+            ),
+            if (actions != null && actions.isNotEmpty) ...[
+              const SizedBox(height: 20),
+              Wrap(
+                spacing: 12,
+                runSpacing: 8,
+                alignment: WrapAlignment.center,
+                children: actions,
               ),
             ],
           ],
         ),
-      );
-    }
+      ),
+    );
+  }
 
-    return RefreshIndicator(
-      onRefresh: _loadWeatherData,
-      child: ListView.builder(
-        padding: const EdgeInsets.only(bottom: 16),
-        itemCount: _filteredData.length,
-        itemBuilder: (context, index) {
-          return WeatherCard(weatherData: _filteredData[index]);
-        },
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Clima actual en tu ubicación'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            tooltip: 'Actualizar',
+            onPressed: _isLoading ? null : _loadCurrentWeather,
+          ),
+        ],
+      ),
+      body: RefreshIndicator(
+        onRefresh: _loadCurrentWeather,
+        child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.all(16),
+          children: [
+            Text(
+              'Consulta la información meteorológica en tiempo real usando tus coordenadas actuales.',
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: Colors.grey[700],
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 24),
+            if (_isLoading)
+              const SizedBox(
+                height: 280,
+                child: Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      CircularProgressIndicator(),
+                      SizedBox(height: 16),
+                      Text('Buscando tu ubicación y clima actual...'),
+                    ],
+                  ),
+                ),
+              )
+            else if (_serviceDisabled)
+              _buildStatusMessage(
+                icon: Icons.location_disabled,
+                iconColor: Colors.redAccent,
+                title: 'Servicio de ubicación desactivado',
+                message:
+                    'Activa los servicios de ubicación del dispositivo para obtener el clima en tiempo real.',
+                actions: [
+                  ElevatedButton.icon(
+                    onPressed: Geolocator.openLocationSettings,
+                    icon: const Icon(Icons.settings),
+                    label: const Text('Abrir ajustes de ubicación'),
+                  ),
+                ],
+              )
+            else if (_permissionDeniedForever)
+              _buildStatusMessage(
+                icon: Icons.lock_location,
+                iconColor: Colors.deepOrange,
+                title: 'Permiso de ubicación denegado permanentemente',
+                message:
+                    'Otorga permisos de ubicación desde la configuración del sistema para continuar.',
+                actions: [
+                  ElevatedButton.icon(
+                    onPressed: permission_handler.openAppSettings,
+                    icon: const Icon(Icons.settings),
+                    label: const Text('Abrir configuración'),
+                  ),
+                ],
+              )
+            else if (_permissionDenied)
+              _buildStatusMessage(
+                icon: Icons.location_off,
+                iconColor: Colors.orangeAccent,
+                title: 'Permiso de ubicación denegado',
+                message:
+                    'Se necesita tu autorización para acceder a la ubicación y mostrar el clima. Inténtalo nuevamente.',
+              )
+            else if (_errorMessage != null)
+              _buildStatusMessage(
+                icon: Icons.error_outline,
+                iconColor: Colors.red,
+                title: 'No se pudo obtener el clima',
+                message: _errorMessage!,
+                actions: [
+                  ElevatedButton.icon(
+                    onPressed: _loadCurrentWeather,
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('Reintentar'),
+                  ),
+                ],
+              )
+            else if (_currentWeather != null)
+              WindCard(
+                weatherData: _currentWeather!,
+                latitude: _currentPosition?.latitude ?? _currentWeather!.latitude,
+                longitude: _currentPosition?.longitude ?? _currentWeather!.longitude,
+              )
+            else
+              _buildStatusMessage(
+                icon: Icons.cloud,
+                iconColor: Colors.blueGrey,
+                title: 'Sin datos disponibles',
+                message:
+                    'Desliza hacia abajo para intentar obtener nuevamente la información meteorológica.',
+              ),
+            const SizedBox(height: 24),
+            const Text(
+              'Desliza hacia abajo para actualizar en cualquier momento.',
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
       ),
     );
   }

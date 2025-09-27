@@ -1,7 +1,24 @@
 import 'package:flutter/material.dart';
-import '../models/wind_data.dart';
+
+import '../models/weather_data.dart';
 import '../services/weather_service.dart';
-import '../widgets/wind_card.dart';
+import '../widgets/weather_card.dart';
+
+class _LocationTarget {
+  final String label;
+  final double latitude;
+  final double longitude;
+
+  const _LocationTarget(this.label, this.latitude, this.longitude);
+}
+
+const List<_LocationTarget> _defaultLocations = [
+  _LocationTarget('Bogotá', 4.7110, -74.0721),
+  _LocationTarget('Medellín', 6.2442, -75.5812),
+  _LocationTarget('Cali', 3.4516, -76.5320),
+  _LocationTarget('Barranquilla', 10.9685, -74.7813),
+  _LocationTarget('Cartagena', 10.3910, -75.4794),
+];
 
 class WeatherScreen extends StatefulWidget {
   const WeatherScreen({super.key});
@@ -11,18 +28,22 @@ class WeatherScreen extends StatefulWidget {
 }
 
 class _WeatherScreenState extends State<WeatherScreen> {
-  final WeatherService _weatherService = WeatherService();
-  List<WindData> _windData = [];
+  final OpenWeatherService _weatherService = OpenWeatherService();
+  List<WeatherData> _weatherData = [];
   bool _isLoading = true;
   String? _error;
   String _searchQuery = '';
-  String? _selectedDepartment;
-  List<String> _departments = [];
 
   @override
   void initState() {
     super.initState();
     _loadWeatherData();
+  }
+
+  @override
+  void dispose() {
+    _weatherService.dispose();
+    super.dispose();
   }
 
   Future<void> _loadWeatherData() async {
@@ -32,52 +53,55 @@ class _WeatherScreenState extends State<WeatherScreen> {
     });
 
     try {
-      final data = await _weatherService.getWindData(
-        department: _selectedDepartment,
+      final results = await Future.wait(
+        _defaultLocations.map((location) async {
+          final weather = await _weatherService.getWeather(
+            latitude: location.latitude,
+            longitude: location.longitude,
+          );
+          if (weather.cityName == 'Ubicación desconocida') {
+            return weather.copyWith(cityName: location.label);
+          }
+          return weather;
+        }),
       );
-      final departments = _extractDepartments(data);
+
+      results.sort((a, b) => a.cityName.compareTo(b.cityName));
+
+      if (!mounted) return;
       setState(() {
-        _windData = data;
-        if (_selectedDepartment == null || _departments.isEmpty) {
-          _departments = departments;
-        }
+        _weatherData = results;
         _isLoading = false;
       });
-    } catch (e) {
+    } on OpenWeatherException catch (error) {
+      if (!mounted) return;
       setState(() {
-        _error = e.toString();
+        _error = error.message;
+        _isLoading = false;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _error = error.toString();
         _isLoading = false;
       });
     }
   }
 
-  List<WindData> get _filteredData {
-    if (_searchQuery.isEmpty) {
-      return _windData;
+  List<WeatherData> get _filteredData {
+    if (_searchQuery.trim().isEmpty) {
+      return _weatherData;
     }
 
-    return _windData.where((data) {
-      final estacion = data.estacion?.toLowerCase() ?? '';
-      final municipio = data.municipio?.toLowerCase() ?? '';
-      final departamento = data.departamento?.toLowerCase() ?? '';
-      final query = _searchQuery.toLowerCase();
-      
-      return estacion.contains(query) || 
-             municipio.contains(query) || 
-             departamento.contains(query);
+    final query = _searchQuery.toLowerCase().trim();
+    return _weatherData.where((data) {
+      final name = data.cityName.toLowerCase();
+      final country = (data.countryCode ?? '').toLowerCase();
+      final description = (data.description ?? '').toLowerCase();
+      return name.contains(query) ||
+          country.contains(query) ||
+          description.contains(query);
     }).toList();
-  }
-
-  List<String> _extractDepartments(List<WindData> data) {
-    final set = <String>{};
-    for (final item in data) {
-      final departamento = item.departamento?.trim();
-      if (departamento != null && departamento.isNotEmpty) {
-        set.add(departamento);
-      }
-    }
-    final list = set.toList()..sort();
-    return list;
   }
 
   @override
@@ -86,7 +110,7 @@ class _WeatherScreenState extends State<WeatherScreen> {
       backgroundColor: Colors.grey[100],
       appBar: AppBar(
         title: const Text(
-          'Información del Viento - IDEAM',
+          'Clima en Colombia - OpenWeather',
           style: TextStyle(
             fontWeight: FontWeight.bold,
             color: Colors.white,
@@ -103,7 +127,6 @@ class _WeatherScreenState extends State<WeatherScreen> {
       ),
       body: Column(
         children: [
-          // Header con estadísticas
           Container(
             width: double.infinity,
             padding: const EdgeInsets.all(16),
@@ -117,7 +140,7 @@ class _WeatherScreenState extends State<WeatherScreen> {
             child: Column(
               children: [
                 Text(
-                  'Estaciones Meteorológicas',
+                  'Datos provistos por OpenWeatherMap',
                   style: TextStyle(
                     color: Colors.white.withOpacity(0.9),
                     fontSize: 16,
@@ -125,37 +148,32 @@ class _WeatherScreenState extends State<WeatherScreen> {
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  '${_filteredData.length} estaciones activas',
+                  '${_filteredData.length} ubicaciones monitoreadas',
                   style: const TextStyle(
                     color: Colors.white,
                     fontSize: 24,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
-                if (_selectedDepartment != null) ...[
-                  const SizedBox(height: 12),
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.15),
-                      borderRadius: BorderRadius.circular(30),
-                    ),
-                    child: Text(
-                      'Departamento: $_selectedDepartment',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w500,
-                      ),
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(30),
+                  ),
+                  child: const Text(
+                    'Actualización en tiempo real por coordenadas',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
                     ),
                   ),
-                ],
+                ),
               ],
             ),
           ),
-
-          // Barra de búsqueda
           Padding(
             padding: const EdgeInsets.all(16),
             child: TextField(
@@ -165,7 +183,7 @@ class _WeatherScreenState extends State<WeatherScreen> {
                 });
               },
               decoration: InputDecoration(
-                hintText: 'Buscar por estación, municipio o departamento...',
+                hintText: 'Buscar por ciudad, país o condición climática...',
                 prefixIcon: const Icon(Icons.search),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
@@ -180,54 +198,6 @@ class _WeatherScreenState extends State<WeatherScreen> {
               ),
             ),
           ),
-
-          // Filtro por departamento
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: DropdownButtonFormField<String?>(
-              value: _selectedDepartment,
-              isExpanded: true,
-              decoration: InputDecoration(
-                labelText: 'Filtrar por departamento',
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide.none,
-                ),
-                filled: true,
-                fillColor: Colors.white,
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 4,
-                ),
-              ),
-              icon: const Icon(Icons.keyboard_arrow_down_rounded),
-              items: [
-                const DropdownMenuItem<String?>(
-                  value: null,
-                  child: Text('Todos los departamentos'),
-                ),
-                ..._departments.map(
-                  (dept) => DropdownMenuItem<String?>(
-                    value: dept,
-                    child: Text(dept),
-                  ),
-                ),
-              ],
-              onChanged: (value) {
-                setState(() {
-                  _selectedDepartment = value;
-                  if (value != null && !_departments.contains(value)) {
-                    _departments = [..._departments, value]..sort();
-                  }
-                });
-                _loadWeatherData();
-              },
-            ),
-          ),
-
-          const SizedBox(height: 8),
-
-          // Contenido principal
           Expanded(
             child: _buildContent(),
           ),
@@ -264,12 +234,11 @@ class _WeatherScreenState extends State<WeatherScreen> {
               color: Colors.red,
             ),
             const SizedBox(height: 16),
-            Text(
+            const Text(
               'Error al cargar los datos',
               style: TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.bold,
-                color: Colors.grey[800],
               ),
             ),
             const SizedBox(height: 8),
@@ -306,10 +275,9 @@ class _WeatherScreenState extends State<WeatherScreen> {
             const SizedBox(height: 16),
             Text(
               _searchQuery.isEmpty
-                  ? (_selectedDepartment == null
-                      ? 'No hay datos disponibles'
-                      : 'No hay datos para el departamento seleccionado')
-                  : 'No se encontraron resultados',
+                  ? 'No hay datos disponibles'
+                  : 'No se encontraron resultados para "$_searchQuery"',
+              textAlign: TextAlign.center,
               style: TextStyle(
                 fontSize: 18,
                 color: Colors.grey[600],
@@ -319,15 +287,6 @@ class _WeatherScreenState extends State<WeatherScreen> {
               const SizedBox(height: 8),
               Text(
                 'Intenta con otros términos de búsqueda',
-                style: TextStyle(
-                  color: Colors.grey[500],
-                ),
-              ),
-            ] else if (_selectedDepartment != null) ...[
-              const SizedBox(height: 8),
-              Text(
-                'Puedes seleccionar "Todos los departamentos" para ver más datos',
-                textAlign: TextAlign.center,
                 style: TextStyle(
                   color: Colors.grey[500],
                 ),
@@ -344,7 +303,7 @@ class _WeatherScreenState extends State<WeatherScreen> {
         padding: const EdgeInsets.only(bottom: 16),
         itemCount: _filteredData.length,
         itemBuilder: (context, index) {
-          return WindCard(windData: _filteredData[index]);
+          return WeatherCard(weatherData: _filteredData[index]);
         },
       ),
     );

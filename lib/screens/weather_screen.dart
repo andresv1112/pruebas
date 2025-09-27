@@ -261,7 +261,7 @@ class _WeatherScreenState extends State<WeatherScreen> {
               )
             else if (_permissionDeniedForever)
               _buildStatusMessage(
-                icon: Icons.lock_location,
+                icon: Icons.lock_outline,
                 iconColor: Colors.deepOrange,
                 title: 'Permiso de ubicación denegado permanentemente',
                 message:

@@ -42,7 +42,18 @@ class WindCard extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 8),
-            
+
+            if (windData.codigo != null) ...[
+              Text(
+                'Código estación: ${windData.codigo}',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.grey[600],
+                ),
+              ),
+              const SizedBox(height: 8),
+            ],
+
             // Ubicación
             Text(
               '${windData.municipio ?? 'N/A'}, ${windData.departamento ?? 'N/A'}',
@@ -163,6 +174,27 @@ class WindCard extends StatelessWidget {
                   const SizedBox(width: 4),
                   Text(
                     'Última observación: ${DateFormat('dd/MM/yyyy HH:mm').format(windData.fechaObservacion!)}',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.grey[600],
+                    ),
+                  ),
+                ],
+              ),
+            ],
+
+            if (windData.latitud != null && windData.longitud != null) ...[
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Icon(
+                    Icons.public,
+                    size: 16,
+                    color: Colors.grey[600],
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    'Lat: ${windData.latitud!.toStringAsFixed(2)}  ·  Lon: ${windData.longitud!.toStringAsFixed(2)}',
                     style: TextStyle(
                       fontSize: 12,
                       color: Colors.grey[600],

@@ -16,6 +16,8 @@ class _WeatherScreenState extends State<WeatherScreen> {
   bool _isLoading = true;
   String? _error;
   String _searchQuery = '';
+  String? _selectedDepartment;
+  List<String> _departments = [];
 
   @override
   void initState() {
@@ -30,9 +32,15 @@ class _WeatherScreenState extends State<WeatherScreen> {
     });
 
     try {
-      final data = await _weatherService.getWindData();
+      final data = await _weatherService.getWindData(
+        department: _selectedDepartment,
+      );
+      final departments = _extractDepartments(data);
       setState(() {
         _windData = data;
+        if (_selectedDepartment == null || _departments.isEmpty) {
+          _departments = departments;
+        }
         _isLoading = false;
       });
     } catch (e) {
@@ -47,7 +55,7 @@ class _WeatherScreenState extends State<WeatherScreen> {
     if (_searchQuery.isEmpty) {
       return _windData;
     }
-    
+
     return _windData.where((data) {
       final estacion = data.estacion?.toLowerCase() ?? '';
       final municipio = data.municipio?.toLowerCase() ?? '';
@@ -58,6 +66,18 @@ class _WeatherScreenState extends State<WeatherScreen> {
              municipio.contains(query) || 
              departamento.contains(query);
     }).toList();
+  }
+
+  List<String> _extractDepartments(List<WindData> data) {
+    final set = <String>{};
+    for (final item in data) {
+      final departamento = item.departamento?.trim();
+      if (departamento != null && departamento.isNotEmpty) {
+        set.add(departamento);
+      }
+    }
+    final list = set.toList()..sort();
+    return list;
   }
 
   @override
@@ -112,10 +132,29 @@ class _WeatherScreenState extends State<WeatherScreen> {
                     fontWeight: FontWeight.bold,
                   ),
                 ),
+                if (_selectedDepartment != null) ...[
+                  const SizedBox(height: 12),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(30),
+                    ),
+                    child: Text(
+                      'Departamento: $_selectedDepartment',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
-          
+
           // Barra de búsqueda
           Padding(
             padding: const EdgeInsets.all(16),
@@ -141,7 +180,53 @@ class _WeatherScreenState extends State<WeatherScreen> {
               ),
             ),
           ),
-          
+
+          // Filtro por departamento
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: DropdownButtonFormField<String?>(
+              value: _selectedDepartment,
+              isExpanded: true,
+              decoration: InputDecoration(
+                labelText: 'Filtrar por departamento',
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide.none,
+                ),
+                filled: true,
+                fillColor: Colors.white,
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 4,
+                ),
+              ),
+              icon: const Icon(Icons.keyboard_arrow_down_rounded),
+              items: [
+                const DropdownMenuItem<String?>(
+                  value: null,
+                  child: Text('Todos los departamentos'),
+                ),
+                ..._departments.map(
+                  (dept) => DropdownMenuItem<String?>(
+                    value: dept,
+                    child: Text(dept),
+                  ),
+                ),
+              ],
+              onChanged: (value) {
+                setState(() {
+                  _selectedDepartment = value;
+                  if (value != null && !_departments.contains(value)) {
+                    _departments = [..._departments, value]..sort();
+                  }
+                });
+                _loadWeatherData();
+              },
+            ),
+          ),
+
+          const SizedBox(height: 8),
+
           // Contenido principal
           Expanded(
             child: _buildContent(),
@@ -220,8 +305,10 @@ class _WeatherScreenState extends State<WeatherScreen> {
             ),
             const SizedBox(height: 16),
             Text(
-              _searchQuery.isEmpty 
-                  ? 'No hay datos disponibles'
+              _searchQuery.isEmpty
+                  ? (_selectedDepartment == null
+                      ? 'No hay datos disponibles'
+                      : 'No hay datos para el departamento seleccionado')
                   : 'No se encontraron resultados',
               style: TextStyle(
                 fontSize: 18,
@@ -232,6 +319,15 @@ class _WeatherScreenState extends State<WeatherScreen> {
               const SizedBox(height: 8),
               Text(
                 'Intenta con otros términos de búsqueda',
+                style: TextStyle(
+                  color: Colors.grey[500],
+                ),
+              ),
+            ] else if (_selectedDepartment != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                'Puedes seleccionar "Todos los departamentos" para ver más datos',
+                textAlign: TextAlign.center,
                 style: TextStyle(
                   color: Colors.grey[500],
                 ),

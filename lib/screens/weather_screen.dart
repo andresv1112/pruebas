@@ -1,4 +1,6 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:permission_handler/permission_handler.dart' as permission_handler;
 
@@ -105,6 +107,35 @@ class _WeatherScreenState extends State<WeatherScreen> {
       if (!mounted) return;
       setState(() {
         _errorMessage = error.message;
+        _isLoading = false;
+        _currentWeather = null;
+        _currentPosition = null;
+      });
+    } on PlatformException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        final buffer = StringBuffer(
+          'No se pudo acceder a la ubicación del dispositivo en este momento.',
+        );
+
+        if (kIsWeb) {
+          buffer.write(
+            ' En la versión web, verifica que el navegador tenga permisos de ubicación activos o consulta manualmente tu ciudad desde el servicio meteorológico.',
+          );
+        } else if (!kIsWeb &&
+            (defaultTargetPlatform == TargetPlatform.macOS ||
+                defaultTargetPlatform == TargetPlatform.windows ||
+                defaultTargetPlatform == TargetPlatform.linux)) {
+          buffer.write(
+            ' En escritorio, asegúrate de habilitar el servicio de localización del sistema o consulta temporalmente el clima de tu ciudad de forma manual.',
+          );
+        }
+
+        if (error.message != null && error.message!.isNotEmpty) {
+          buffer.write(' Detalle técnico: ${error.message}.');
+        }
+
+        _errorMessage = buffer.toString();
         _isLoading = false;
         _currentWeather = null;
         _currentPosition = null;
